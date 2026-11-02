@@ -130,6 +130,11 @@ button:hover {
     background: #5148e5;
 }
 
+button:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
 #mic {
     background: #26344f;
 }
@@ -151,7 +156,7 @@ button:hover {
         <div class="logo">🤖</div>
         <div>
             <h2>My AI Assistant</h2>
-            <div class="status">● Ready to help</div>
+            <div class="status" id="status">● Ready to help</div>
         </div>
     </header>
 
@@ -166,20 +171,49 @@ button:hover {
 
     <div class="input-area">
         <button id="mic" onclick="voiceInput()">🎤</button>
+
         <input
             type="text"
             id="userInput"
             placeholder="Ask me anything..."
+            autocomplete="off"
         >
-        <button onclick="sendMessage()">➤</button>
+
+        <button id="sendBtn" onclick="sendMessage()">➤</button>
     </div>
 
 </div>
 
 <script>
 
+// =====================================
+// QLLM API CONFIGURATION
+// =====================================
+
+// Replace with your actual API key.
+// WARNING: Do not publish your API key in frontend code.
+
+const API_KEY = "YOUR_QOQ_API_KEY";
+
+const API_URL =
+    "https://api.qllm.quoqo.app/v1/chat/completions";
+
+const MODEL = "qllm-sc-in-8b";
+
+// =====================================
+
 const chat = document.getElementById("chat");
 const input = document.getElementById("userInput");
+const statusText = document.getElementById("status");
+const sendBtn = document.getElementById("sendBtn");
+
+// Keep conversation history for context
+const messages = [
+    {
+        role: "system",
+        content: "You are a helpful AI assistant. Reply in the language the user prefers."
+    }
+];
 
 function addMessage(message, type) {
 
@@ -202,52 +236,100 @@ async function sendMessage() {
 
     if (!message) return;
 
+    if (API_KEY === "YOUR_QOQ_API_KEY") {
+        addMessage(
+            "Please configure your QLLM API key first.",
+            "bot"
+        );
+        return;
+    }
+
     addMessage(message, "user");
 
     input.value = "";
+    sendBtn.disabled = true;
 
     const typing = document.createElement("div");
     typing.className = "typing";
     typing.textContent = "AI is thinking...";
     chat.appendChild(typing);
 
+    statusText.textContent = "● Thinking...";
+
+    messages.push({
+        role: "user",
+        content: message
+    });
+
     try {
 
-        const response = await fetch("/api/chat", {
+        const response = await fetch(API_URL, {
             method: "POST",
+
             headers: {
-                "Content-Type": "application/json"
+                "Content-Type": "application/json",
+                "Authorization": "Bearer " + API_KEY
             },
+
             body: JSON.stringify({
-                message: message
+                model: MODEL,
+                messages: messages,
+                rag: true
             })
         });
 
+        const data = await response.json();
+
         if (!response.ok) {
-            throw new Error("API connection failed");
+            throw new Error(
+                data.error?.message ||
+                data.message ||
+                "API request failed: " + response.status
+            );
         }
 
-        const data = await response.json();
+        const reply =
+            data.choices?.[0]?.message?.content;
+
+        if (!reply) {
+            throw new Error("No response received from AI.");
+        }
+
+        messages.push({
+            role: "assistant",
+            content: reply
+        });
 
         typing.remove();
 
-        addMessage(
-            data.reply || "No response received.",
-            "bot"
-        );
+        addMessage(reply, "bot");
+
+        statusText.textContent = "● Ready to help";
 
     } catch (error) {
 
         typing.remove();
 
         addMessage(
-            "AI server abhi connect nahi hai. AI API backend setup karna hoga.",
+            "Error: " + error.message +
+            "\nPlease check your API key, model, and API connection.",
             "bot"
         );
+
+        statusText.textContent = "● Connection error";
+
+        // Remove failed user message from history
+        messages.pop();
+
+    } finally {
+
+        sendBtn.disabled = false;
+        input.focus();
 
     }
 }
 
+// Enter key support
 input.addEventListener("keydown", function(event) {
 
     if (event.key === "Enter") {
@@ -255,6 +337,10 @@ input.addEventListener("keydown", function(event) {
     }
 
 });
+
+// =====================================
+// VOICE INPUT
+// =====================================
 
 function voiceInput() {
 
@@ -270,12 +356,33 @@ function voiceInput() {
     const recognition = new SpeechRecognition();
 
     recognition.lang = "hi-IN";
-    recognition.start();
+    recognition.continuous = false;
+    recognition.interimResults = false;
+
+    recognition.onstart = function() {
+        statusText.textContent = "● Listening...";
+    };
 
     recognition.onresult = function(event) {
-        input.value = event.results[0][0].transcript;
+
+        input.value =
+            event.results[0][0].transcript;
+
         sendMessage();
+
     };
+
+    recognition.onerror = function() {
+        statusText.textContent = "● Voice input error";
+    };
+
+    recognition.onend = function() {
+        if (!sendBtn.disabled) {
+            statusText.textContent = "● Ready to help";
+        }
+    };
+
+    recognition.start();
 
 }
 
